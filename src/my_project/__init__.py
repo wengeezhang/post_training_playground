@@ -28,6 +28,6 @@ for key, value in first_example.items():
 # print(dataset[0])
 
 # define a var and print it
-# model_id = "my_project"
+# model_id = "post_training_playground"
 #
 # print(model_id)
