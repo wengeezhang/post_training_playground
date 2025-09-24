@@ -6,7 +6,7 @@ import os
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"  # 国内镜像
 # set start time
 startTime = time.time()
-print("Loading dataset...")
+print("Loading dataset... in init")
 
 
 dataset = load_dataset("csv", data_files="prompts.csv", split="train")
