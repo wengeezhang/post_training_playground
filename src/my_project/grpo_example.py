@@ -1,3 +1,7 @@
+import os
+# 在导入任何模块之前设置虚拟的 OpenAI API Key
+os.environ["OPENAI_API_KEY"] = "dummy-key"
+
 import torch
 from transformers import TrainingArguments, PreTrainedTokenizer
 from trl import GRPOConfig, GRPOTrainer
@@ -33,7 +37,18 @@ class TinyModel(PreTrainedModel):
         ])
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size)
 
-    def forward(self, input_ids, attention_mask=None, labels=None, **kwargs):
+    def forward(self, input_ids, attention_mask=None, labels=None, logits_to_keep=None, **kwargs):
+        # 处理 logits_to_keep 参数
+        if logits_to_keep is not None:
+            # GRPOTrainer 会先 +1 再 -1，所以我们需要正确处理这个逻辑
+            # 如果指定了 logits_to_keep，只保留前 logits_to_keep 个 token
+            if logits_to_keep < input_ids.shape[1]:
+                input_ids = input_ids[:, :logits_to_keep]
+                if attention_mask is not None:
+                    attention_mask = attention_mask[:, :logits_to_keep]
+                if labels is not None and labels.shape[1] > logits_to_keep:
+                    labels = labels[:, :logits_to_keep]
+
         # 确保输入输出长度一致
         x = self.embedding(input_ids)
         for layer in self.layers:
@@ -47,9 +62,18 @@ class TinyModel(PreTrainedModel):
 
         loss = None
         if labels is not None:
+            # 确保labels和logits的序列长度一致
+            if labels.shape[1] != logits.shape[1]:
+                min_len = min(labels.shape[1], logits.shape[1])
+                labels = labels[:, :min_len]
+                logits = logits[:, :min_len, :]
+                if attention_mask is not None:
+                    attention_mask = attention_mask[:, :min_len]
+
             loss_fct = nn.CrossEntropyLoss()
             loss = loss_fct(logits.view(-1, self.config.vocab_size), labels.view(-1))
 
+        # 返回符合 GRPOTrainer 期望的格式
         return type('', (), {'loss': loss, 'logits': logits})()
 
     def generate(self, input_ids, max_length=20, **kwargs):
@@ -89,7 +113,17 @@ def create_simple_dataset():
         {"prompt": "7+7=", "response": "14"},
         {"prompt": "8+8=", "response": "16"},
         {"prompt": "9+9=", "response": "18"},
-        {"prompt": "10+10=", "response": "20"}
+        {"prompt": "10+10=", "response": "20"},
+        {"prompt": "11+11=", "response": "22"},  # 将 query 改为 prompt
+        {"prompt": "12+12=", "response": "24"},
+        {"prompt": "13+13=", "response": "26"},
+        {"prompt": "14+14=", "response": "28"},
+        {"prompt": "15+15=", "response": "30"},
+        {"prompt": "16+16=", "response": "32"},
+        {"prompt": "17+17=", "response": "34"},
+        {"prompt": "18+18=", "response": "36"},
+        {"prompt": "19+19=", "response": "38"},
+        {"prompt": "20+20=", "response": "40"}
     ]
     return Dataset.from_list(samples)
 
@@ -140,6 +174,26 @@ class SimpleTokenizer(PreTrainedTokenizer):
                   id not in [self.vocab["[BOS]"], self.vocab["[EOS]"]]]
         return "".join(tokens)
 
+    def save_vocabulary(self, save_directory, filename_prefix=None):
+        """保存词汇表到文件"""
+        import os
+        import json
+
+        # 确保目录存在
+        os.makedirs(save_directory, exist_ok=True)
+
+        # 构建文件名
+        vocab_file = os.path.join(
+            save_directory,
+            (filename_prefix + "-" if filename_prefix else "") + "vocab.json"
+        )
+
+        # 保存词汇表
+        with open(vocab_file, "w", encoding="utf-8") as f:
+            json.dump(self.vocab, f, ensure_ascii=False, indent=2)
+
+        return (vocab_file,)
+
     def __call__(self, text, **kwargs):
         if isinstance(text, str):
             encoded = self.encode(text)
@@ -184,11 +238,11 @@ args = GRPOConfig(
     per_device_train_batch_size=2,
     #generation_batch_size=4,
     num_generations=2,
-    num_iterations=1,
-    steps_per_generation=2,
+    num_iterations=2,
+    steps_per_generation=4,
     max_completion_length=10,
     learning_rate=1e-4,
-    gradient_accumulation_steps=1,
+    gradient_accumulation_steps=2,
     max_steps=5,
     output_dir="./tiny_grpo_output",
     seed=42,
@@ -196,18 +250,35 @@ args = GRPOConfig(
     save_steps=10,
     fp16=False,  # 禁用 fp16
     bf16=False,  # 禁用 bf16
+    use_vllm=False,
+    logging_dir=None,  # 禁用日志目录
+    report_to=[],     # 空列表表示不向任何集成报告
 )
 
 # 简单奖励函数
-def custom_reward_func(samples, **kwargs):
+def custom_reward_func(prompts=None, completions=None, completion_ids=None, **kwargs):
     rewards = []
+
+    # 使用 completions 参数，这是模型生成的内容
+    if completions is not None:
+        samples = completions
+    else:
+        # 备用方案
+        samples = prompts if prompts is not None else []
+
     for sample in samples:
-        # 简单奖励：如果补全包含数字则给高分
-        text = sample["response"] if isinstance(sample, dict) else str(sample)
+        # 处理样本文本
+        if isinstance(sample, dict):
+            text = sample.get("response", sample.get("completion", ""))
+        else:
+            text = str(sample)
+
+        # 简单奖励逻辑：如果包含数字则给高分
         if any(c.isdigit() for c in text):
             rewards.append(1.0)
         else:
             rewards.append(0.0)
+
     return rewards
 
 # 初始化GRPOTrainer
@@ -218,6 +289,7 @@ trainer = GRPOTrainer(
     train_dataset=train_dataset,
     reward_funcs=custom_reward_func,
     processing_class=tokenizer,  # 关键修正：使用 processing_class
+    callbacks=[],  # 禁用所有回调
 )
 
 print("开始训练...")

@@ -1,0 +1,12 @@
+{
+  "architectures": [
+    "TinyModel"
+  ],
+  "eos_token_id": 103,
+  "hidden_size": 32,
+  "model_type": "tiny",
+  "num_hidden_layers": 1,
+  "torch_dtype": "float32",
+  "transformers_version": "4.53.0",
+  "vocab_size": 104
+}
