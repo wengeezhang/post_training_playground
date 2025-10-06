@@ -3,12 +3,10 @@ import os
 os.environ["OPENAI_API_KEY"] = "dummy-key"
 
 import torch
+import torch.nn as nn
 from transformers import TrainingArguments, PreTrainedTokenizer
 from trl import GRPOConfig, GRPOTrainer
 from datasets import Dataset
-
-import torch
-import torch.nn as nn
 from transformers import PreTrainedModel, PretrainedConfig
 
 
@@ -21,7 +19,8 @@ class TinyModelConfig(PretrainedConfig):
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
         self.num_hidden_layers = num_hidden_layers
-        self.eos_token_id = 103  # 与Tokenizer中的EOS ID一致
+        self.eos_token_id = 59  # 与优化后的Tokenizer中的EOS ID一致
+        self.pad_token_id = 56  # 添加pad_token_id与Tokenizer一致
 
 
 # 极简Transformer模型（仅用于演示）
@@ -127,6 +126,7 @@ def create_simple_dataset():
     ]
     return Dataset.from_list(samples)
 
+
 train_dataset = create_simple_dataset()
 print(f"数据集大小: {len(train_dataset)}")
 print(f"样本示例: {train_dataset[0]}")
@@ -135,8 +135,44 @@ print(f"样本示例: {train_dataset[0]}")
 class SimpleTokenizer(PreTrainedTokenizer):
     def __init__(self, **kwargs):
         # 创建简单的词汇表
-        vocab = {str(i): i for i in range(100)}
-        vocab.update({"[PAD]": 100, "[UNK]": 101, "[BOS]": 102, "[EOS]": 103})
+        # 修改词汇表初始化部分
+        vocab = {
+            # 数字 0-9
+            **{str(i): i for i in range(10)},
+
+            # 数学符号 (10-19)
+            "+": 10,
+            "=": 11,
+            "-": 12,
+            "*": 13,
+            "/": 14,
+            "(": 15,
+            ")": 16,
+            "[": 17,
+            "]": 18,
+            "{": 19,
+
+            # 字母 a-z (20-45)
+            **{chr(97 + i): 20 + i for i in range(26)},
+
+            # 空格和标点 (46-55)
+            " ": 46,
+            ".": 47,
+            ",": 48,
+            ":": 49,
+            ";": 50,
+            "?": 51,
+            "!": 52,
+            "'": 53,
+            '"': 54,
+            "\\": 55,
+
+            # 特殊token (56-59)
+            "[PAD]": 56,
+            "[UNK]": 57,
+            "[BOS]": 58,
+            "[EOS]": 59
+        }
         # 设置词汇表相关属性
         self.vocab = vocab.copy()
 
@@ -144,8 +180,10 @@ class SimpleTokenizer(PreTrainedTokenizer):
         super().__init__(**kwargs)
         self._vocab_str_to_int = self.vocab
         self._vocab_int_to_str = {v: k for k, v in self.vocab.items()}
-        self.eos_token_id = 103  # 明确设置EOS token ID
-        self.pad_token_id = 100
+        self.eos_token_id = 59
+        self.pad_token_id = 56
+        self.unk_token_id = 57
+        self.bos_token_id = 58
 
     @property
     def vocab_size(self):
@@ -198,21 +236,19 @@ class SimpleTokenizer(PreTrainedTokenizer):
         if isinstance(text, str):
             encoded = self.encode(text)
             return {
-                "input_ids": torch.tensor([encoded]),
-                "attention_mask": torch.tensor([[1] * len(encoded)])  # 添加attention_mask
+                "input_ids": torch.tensor([encoded]).to(device),
+                "attention_mask": torch.tensor([[1] * len(encoded)]).to(device)
             }
         elif isinstance(text, dict) and "prompt" in text:
             encoded = self.encode(text["prompt"])
             return {
-                "input_ids": torch.tensor([encoded]),
-                "attention_mask": torch.tensor([[1] * len(encoded)])
+                "input_ids": torch.tensor([encoded]).to(device),
+                "attention_mask": torch.tensor([[1] * len(encoded)]).to(device)
             }
         else:
-            # 处理批量文本
             encoded_list = [self.encode(t) for t in text]
             max_len = max(len(seq) for seq in encoded_list)
 
-            # 填充并创建attention_mask
             padded_ids = []
             attention_masks = []
             for seq in encoded_list:
@@ -222,40 +258,22 @@ class SimpleTokenizer(PreTrainedTokenizer):
                 attention_masks.append([1] * len(seq) + [0] * pad_len)
 
             return {
-                "input_ids": torch.tensor(padded_ids),
-                "attention_mask": torch.tensor(attention_masks)
+                "input_ids": torch.tensor(padded_ids).to(device),
+                "attention_mask": torch.tensor(attention_masks).to(device)
             }
+
 
 # 初始化组件
 tokenizer = SimpleTokenizer()
-model_config = TinyModelConfig(vocab_size=104, hidden_size=32, num_hidden_layers=1)
+model_config = TinyModelConfig(vocab_size=60, hidden_size=32, num_hidden_layers=1)
 model = TinyModel(model_config)
 
 print(f"模型参数量: {sum(p.numel() for p in model.parameters())}")
-
-# GRPO配置参数（调整为极简版本）
-args = GRPOConfig(
-    per_device_train_batch_size=2,
-    #generation_batch_size=4,
-    num_generations=2,
-    num_iterations=2,
-    steps_per_generation=4,
-    max_completion_length=10,
-    learning_rate=1e-4,
-    gradient_accumulation_steps=2,
-    max_steps=5,
-    output_dir="./tiny_grpo_output",
-    seed=42,
-    logging_steps=1,
-    save_steps=10,
-    fp16=False,  # 禁用 fp16
-    bf16=False,  # 禁用 bf16
-    use_vllm=False,
-    logging_dir=None,  # 禁用日志目录
-    report_to=[],     # 空列表表示不向任何集成报告
-)
-
 # 简单奖励函数
+
+# forward before training
+
+
 def custom_reward_func(prompts=None, completions=None, completion_ids=None, **kwargs):
     rewards = []
 
@@ -281,6 +299,32 @@ def custom_reward_func(prompts=None, completions=None, completion_ids=None, **kw
 
     return rewards
 
+
+device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+print(f"使用设备: {device}")
+
+# GRPO配置参数（调整为极简版本）
+args = GRPOConfig(
+    per_device_train_batch_size=2,
+    #generation_batch_size=4,
+    num_generations=2,
+    num_iterations=10,
+    steps_per_generation=4,
+    max_completion_length=10,
+    learning_rate=1e-4,
+    gradient_accumulation_steps=2,
+    max_steps=5,
+    output_dir="./tiny_grpo_output",
+    seed=42,
+    logging_steps=1,
+    save_steps=10,
+    fp16=False,  # 禁用 fp16
+    bf16=False,  # 禁用 bf16
+    use_vllm=False,
+    logging_dir=None,  # 禁用日志目录
+    report_to=[],     # 空列表表示不向任何集成报告
+)
+
 # 初始化GRPOTrainer
 # 正确的 GRPOTrainer 初始化
 trainer = GRPOTrainer(
@@ -295,3 +339,27 @@ trainer = GRPOTrainer(
 print("开始训练...")
 trainer.train()
 print("训练完成!")
+
+model.to(device)
+
+# 测试tokenizer
+test_str = "1+1="
+print(f"原始字符串: {test_str}")
+encoded = tokenizer.encode(test_str)
+print(f"编码结果: {encoded}")
+decoded = tokenizer.decode(encoded)
+print(f"解码结果: {decoded}") # 输出应为 "1+1="
+
+
+sample_prompt_after = "1+1="
+sample_inputs_after = tokenizer(sample_prompt_after, return_tensors="pt")
+sample_inputs_after = {k: v.to(device) for k, v in sample_inputs_after.items()}
+
+with torch.no_grad():
+    sample_outputs_after = model(**sample_inputs_after)
+    print(f"模型输出 shape: {sample_outputs_after.logits.shape}")
+
+    pred_token_ids_after = torch.argmax(sample_outputs_after.logits, dim=-1)
+    print(f"预测的token ID: {pred_token_ids_after}")
+    pred_tokens_after = tokenizer.decode(pred_token_ids_after[0].cpu().numpy())
+    print(f"预测的token: {pred_tokens_after}")
