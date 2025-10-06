@@ -44,7 +44,8 @@ print(f"dataloader size: {len(dataloader)}")
 print(f"dataloader.dataset size: {len(dataloader.dataset)}")
 
 for batch in dataloader:
-    tokens = batch["input_ids"].numel()
+    batchInputIds = batch["input_ids"]
+    tokens = batchInputIds.numel()
     print(tokens)
 
 
