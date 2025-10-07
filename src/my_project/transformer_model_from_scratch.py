@@ -6,7 +6,7 @@ d_model = 64
 nhead = 4
 num_decoder_layers = 3
 dim_feedforward = 256
-vocab_size = 60  # 假设的词表大小
+vocab_size = 10000  # 假设的词表大小
 max_seq_length = 50  # 最大序列长度
 
 # 1. 创建单个解码器层
