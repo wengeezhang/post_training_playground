@@ -122,7 +122,26 @@ def create_simple_dataset():
         {"prompt": "17+17=", "response": "34"},
         {"prompt": "18+18=", "response": "36"},
         {"prompt": "19+19=", "response": "38"},
-        {"prompt": "20+20=", "response": "40"}
+        {"prompt": "20+20=", "response": "40"},
+        {"prompt": "21+21=", "response": "42"},  # 将 query 改为 prompt
+        {"prompt": "22+22=", "response": "44"},
+        {"prompt": "23+23=", "response": "46"},
+        {"prompt": "24+24=", "response": "48"},
+        {"prompt": "25+25=", "response": "50"},
+        {"prompt": "26+26=", "response": "52"},
+        {"prompt": "27+27=", "response": "54"},
+        {"prompt": "28+28=", "response": "56"},
+        {"prompt": "29+29=", "response": "58"},
+        {"prompt": "30+30=", "response": "60"},
+        {"prompt": "31+31=", "response": "62"},  # 将 query 改为 prompt
+        {"prompt": "32+32=", "response": "64"},
+        {"prompt": "33+33=", "response": "66"},
+        {"prompt": "34+34=", "response": "68"},
+        {"prompt": "35+35=", "response": "70"},
+        {"prompt": "36+36=", "response": "72"},
+        {"prompt": "37+37=", "response": "74"},
+        {"prompt": "38+38=", "response": "76"},
+        {"prompt": "39+39=", "response": "78"},
     ]
     return Dataset.from_list(samples)
 
@@ -305,11 +324,11 @@ print(f"使用设备: {device}")
 
 # GRPO配置参数（调整为极简版本）
 args = GRPOConfig(
-    per_device_train_batch_size=2,
+    per_device_train_batch_size=3,
     #generation_batch_size=4,
     num_generations=2,
-    num_iterations=10,
-    steps_per_generation=4,
+    num_iterations=2,
+    steps_per_generation=6,
     max_completion_length=10,
     learning_rate=1e-4,
     gradient_accumulation_steps=2,
