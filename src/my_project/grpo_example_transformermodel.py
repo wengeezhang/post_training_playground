@@ -106,9 +106,9 @@ class TinyModel(PreTrainedModel):
         if logits_to_keep is not None:
             if logits_to_keep < input_ids.shape[1]:
                 if attention_mask is not None:
-                    attention_mask = attention_mask[:, :logits_to_keep]
+                    attention_mask = attention_mask[:, -logits_to_keep:]
                 if labels is not None and labels.shape[1] > logits_to_keep:
-                    labels = labels[:, :logits_to_keep]
+                    labels = labels[:, -logits_to_keep:]
 
         if attention_mask is not None:
             logits = logits.masked_fill(~attention_mask.unsqueeze(-1).bool(), float('-inf'))
