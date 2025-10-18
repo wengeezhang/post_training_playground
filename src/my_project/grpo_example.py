@@ -37,42 +37,55 @@ class TinyModel(PreTrainedModel):
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size)
 
     def forward(self, input_ids, attention_mask=None, labels=None, logits_to_keep=None, **kwargs):
-        # 处理 logits_to_keep 参数
-        if logits_to_keep is not None:
-            # GRPOTrainer 会先 +1 再 -1，所以我们需要正确处理这个逻辑
-            # 如果指定了 logits_to_keep，只保留前 logits_to_keep 个 token
-            if logits_to_keep < input_ids.shape[1]:
-                input_ids = input_ids[:, :logits_to_keep]
-                if attention_mask is not None:
-                    attention_mask = attention_mask[:, :logits_to_keep]
-                if labels is not None and labels.shape[1] > logits_to_keep:
-                    labels = labels[:, :logits_to_keep]
+        # 保存原始输入长度
+        seq_len = input_ids.shape[1]
 
-        # 确保输入输出长度一致
+        # 处理 logits_to_keep 参数（GRPO专用）
+        start_idx = 0
+        if logits_to_keep is not None:
+            # 计算需要保留的起始位置（保留最后 logits_to_keep 个token）
+            start_idx = max(0, seq_len - logits_to_keep)
+
+            # 截取输入序列（保留补全部分）
+            input_ids = input_ids[:, start_idx:]
+
+            # 同步截取注意力掩码
+            if attention_mask is not None:
+                attention_mask = attention_mask[:, start_idx:]
+
+            # 同步截取标签（如果存在）
+            if labels is not None:
+                labels = labels[:, start_idx:]
+
+        # 前向传播计算
         x = self.embedding(input_ids)
         for layer in self.layers:
             x = torch.tanh(layer(x))
-        logits = self.lm_head(x)  # shape: (batch_size, seq_len, vocab_size)
+        logits = self.lm_head(x)  # [batch, seq_len, vocab_size]
 
-        # 确保输出长度与输入一致
+        # 处理注意力掩码（确保只关注有效位置）
         if attention_mask is not None:
+            # 创建三维掩码 [batch, seq_len, 1]
+            mask_3d = attention_mask.unsqueeze(-1).bool()
             # 将填充位置的logits设为极小值
-            logits = logits.masked_fill(~attention_mask.unsqueeze(-1).bool(), float('-inf'))
+            logits = logits.masked_fill(~mask_3d, float('-inf'))
 
+        # 损失计算（只针对补全部分）
         loss = None
         if labels is not None:
-            # 确保labels和logits的序列长度一致
+            # 确保标签与logits长度一致
             if labels.shape[1] != logits.shape[1]:
                 min_len = min(labels.shape[1], logits.shape[1])
                 labels = labels[:, :min_len]
                 logits = logits[:, :min_len, :]
-                if attention_mask is not None:
-                    attention_mask = attention_mask[:, :min_len]
 
-            loss_fct = nn.CrossEntropyLoss()
-            loss = loss_fct(logits.view(-1, self.config.vocab_size), labels.view(-1))
+            # 计算交叉熵损失
+            loss_fct = nn.CrossEntropyLoss(ignore_index=-100)  # 通常忽略padding
+            loss = loss_fct(
+                logits.view(-1, self.config.vocab_size),
+                labels.view(-1)
+            )
 
-        # 返回符合 GRPOTrainer 期望的格式
         return type('', (), {'loss': loss, 'logits': logits})()
 
     def generate(self, input_ids, max_length=20, **kwargs):
