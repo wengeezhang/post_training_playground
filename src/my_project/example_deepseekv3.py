@@ -249,19 +249,19 @@ model.num_key_value_groups = 1
 
 # Pass through the model
 with torch.no_grad():
-    outputs = model(
+    output_tokens = model.generate(
         input_ids=tokenized_batch["input_ids"]
     )
 
 print("\nModel outputs:")
-print(f"Logits shape: {outputs.logits.shape}")  # Should be [batch_size, seq_len, vocab_size]
+print(f"Logits shape: {output_tokens.shape}")  # Should be [batch_size, seq_len, vocab_size]
 
 # decode outputs.logits
 
-pred_token_ids_after = torch.argmax(outputs.logits, dim=-1)
-print(f"预测的token ID: {pred_token_ids_after}")
-pred_tokens_after_0 = tokenizer.decode(pred_token_ids_after[0].cpu().numpy())
-pred_tokens_after_1 = tokenizer.decode(pred_token_ids_after[1].cpu().numpy())
+# pred_token_ids_after = torch.argmax(output_logits, dim=-1)
+# print(f"预测的token ID: {pred_token_ids_after}")
+pred_tokens_after_0 = tokenizer.decode(output_tokens[0].cpu().numpy())
+pred_tokens_after_1 = tokenizer.decode(output_tokens[1].cpu().numpy())
 print(f"预测的token: {pred_tokens_after_0}")
 print(f"预测的token: {pred_tokens_after_1}")
 
