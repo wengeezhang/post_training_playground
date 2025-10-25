@@ -29,6 +29,7 @@ dpConfig = DeepseekV3Config(
     hidden_size=32,
     num_attention_heads=8,
     num_key_value_heads=8,
+    v_head_dim=192,
     batch_first=True,  # 使用(batch, seq, feature)格式
     activation='relu'
 )
@@ -254,4 +255,13 @@ with torch.no_grad():
 
 print("\nModel outputs:")
 print(f"Logits shape: {outputs.logits.shape}")  # Should be [batch_size, seq_len, vocab_size]
+
+# decode outputs.logits
+
+pred_token_ids_after = torch.argmax(outputs.logits, dim=-1)
+print(f"预测的token ID: {pred_token_ids_after}")
+pred_tokens_after_0 = tokenizer.decode(pred_token_ids_after[0].cpu().numpy())
+pred_tokens_after_1 = tokenizer.decode(pred_token_ids_after[1].cpu().numpy())
+print(f"预测的token: {pred_tokens_after_0}")
+print(f"预测的token: {pred_tokens_after_1}")
 
